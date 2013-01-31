@@ -6,7 +6,7 @@
 ##############################################
 # Authors:
 #         Garrett Scott    garrett@gothik.org
-#         Nandor T. Szots  nandor@gothik.org
+#         Nandor T. Szots  nandor@szots.com 
 ##############################################
 
 use strict;
