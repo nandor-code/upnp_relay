@@ -1,11 +1,12 @@
 #!/usr/bin/perl
 
 # upnp_relay.pl version 1.0
+# $Id: upnp_relay.pl 24 2009-01-30 05:05:02Z nandor $
 
 ##############################################
 # Authors:
-#         Nandor T. Szots  nandor@szots.com
 #         Garrett Scott    garrett@gothik.org
+#         Nandor T. Szots  nandor@gothik.org
 ##############################################
 
 use strict;
@@ -17,7 +18,7 @@ use Net::Ifconfig::Wrapper qw( Ifconfig );
 
 
 my %opts;
-getopts('d:l:r:p:e:h', \%opts);
+getopts('d:l:r:p:e:h:f', \%opts);
 
 if( defined($opts{'h'}) ||
    !defined($opts{'r'}) )
@@ -29,6 +30,7 @@ if( defined($opts{'h'}) ||
     print "-l local_port   local port to listen for connections on (default: 1313)\n";
     print "-e eth device   network device to listen for multicast packets on\n";
     print "-d debug        debug level 1-<n>\n";
+    print "-f force        force run (ignore root warnings)\n";
     exit;
 }
 
@@ -37,11 +39,17 @@ my $remote_host  = $opts{'r'};
 my $remote_port  = $opts{'p'};
 my $local_port   = $opts{'l'};
 my $local_eth    = $opts{'e'};
+my $force        = $opts{'f'};
 
 my $local_ip;
 my $network;
 my $netmask;
 
+unless($force) {
+	die "You need to run this script as root to construct relay packets\n" if $>;
+} {
+	_debug("Ignoring non-privledged user check.  Good luck!\n");
+}
 
 if( !defined( $local_eth ) )
 {
@@ -141,7 +149,7 @@ if( $pid == 0 )
 
                 $spoof_sock->set( {ip => {saddr => $spoof_host,
                                           daddr => $dest,
-                                              tos => 22} ,
+                                          tos => 22} ,
                                    udp  => {source => $spoof_port,
                                             dest => 1900,
                                             data => $line } } );
@@ -181,8 +189,8 @@ else
         my $location = $mcast_data;
         my $location_addr;
 
-    if( $location =~ /LOCATION:/i )
-    {
+        if( $location =~ /LOCATION:/i )
+        {
             $location =~ s/\s//g;
             $location =~ tr/[A-Z]/[a-z]/;
             $location =~ s/.*location:http:\/\///g;
@@ -197,10 +205,13 @@ else
 
         print "Packet Location: $location\n" if( $location && $debug >= 1 );
 
-        print "Location: " . inet_ntoa( $location_addr & $netmask ) . " Host: " . inet_ntoa( $from_host & $netmask ) . "\n" if( $debug >= 1 );
+	my $loc = "Unknown";
+	   $loc = inet_ntoa( $location_addr & $netmask ) if( $location_addr );
+
+        print "Location: $loc Host: " . inet_ntoa( $from_host & $netmask ) . "\n" if( $debug >= 1 );
 
         # using the network host here doesnt work for == not sure why...
-        unless( ( inet_ntoa( $location_addr & $netmask ) eq $network_addr ) ||
+        unless( ( $loc eq $network_addr ) ||
                 ( inet_ntoa( $from_host     & $netmask ) eq $network_addr ) )
         {
             $mcast_data =~ s/\r\n/ /g;
@@ -209,8 +220,15 @@ else
         }
         print "Client said:\n$mcast_data\n" if( $debug >= 2 );
 
-        print $remote_connection "PACKETFROM: $from_addr:$from_port\r\n" or &connect();
-        print $remote_connection $mcast_data or &connect();
+        if( $remote_connection && $remote_connection->peername )
+        {
+            $remote_connection->send( "PACKETFROM: $from_addr:$from_port\r\n" ) or _debug( "send() failed on the packet line\n" );
+            $remote_connection->send( $mcast_data ) or _debug( "send() failed on the data line\n" );
+        }
+        else
+        {
+            &connect();
+        }
     }
 
     waitpid( $pid, 0 );
@@ -288,6 +306,8 @@ sub ABRT_handler
 
 sub CHLD_handler
 {
+    $SIG{CHLD} = \&CHLD_handler;
+    my $pid = wait;
     die "My child died so I am dying too!\n";
 }
 
